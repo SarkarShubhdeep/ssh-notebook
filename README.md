@@ -10,7 +10,20 @@ No install for the reader. SSH is used as an application delivery protocol (à l
 
 ## Status
 
-🚧 Early development. See the [Master Plan](docs/masterplan.md) for architecture, MVP breakdown, hosting comparison, and open decision points.
+🚧 Early development — **v0.1** (read-only viewer over SSH) is working. See the [Master Plan](docs/masterplan.md) for architecture, MVP breakdown, hosting comparison, and open decision points.
+
+## Try it locally
+
+```sh
+brew install go                     # if not already installed
+go run ./cmd/ssh                    # starts on :2222, serves ./notebook
+
+# in another terminal (any password is accepted in v0.1):
+ssh localhost -p 2222               # browse the notebook
+ssh localhost -p 2222 welcome.md    # deep-link straight to a file
+```
+
+Config via env: `SSH_PORT`, `SSH_HOST`, `SSH_HOST_KEY`, `NOTEBOOK_DIR`, `NOTEBOOK_PASSWORD` (empty = open).
 
 ## Stack
 

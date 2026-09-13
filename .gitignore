@@ -10,13 +10,15 @@
 *.key
 id_ed25519*
 host_key*
+host_ed25519*
+/.ssh/
 config.yaml
 .env
 .env.*
 
-# Local notebook content (kept in a separate repo)
+# Production notebook content lives on the server volume / a separate repo.
+# The committed ./notebook is only sample content for local dev.
 /content/
-/notebook/
 
 # OS / editor
 .DS_Store

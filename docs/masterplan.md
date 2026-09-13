@@ -208,7 +208,7 @@ ssh-notebook/
 
 ## 9. Milestone Checklist
 
-- [ ] v0.1 Read-only viewer over SSH (local dir)
+- [x] v0.1 Read-only viewer over SSH (local dir)
 - [ ] v0.2 Auth model (password + key whitelist + public bypass)
 - [ ] v0.3 In-terminal editing that writes to disk
 - [ ] v0.4 Fly persistent volume + async backup
