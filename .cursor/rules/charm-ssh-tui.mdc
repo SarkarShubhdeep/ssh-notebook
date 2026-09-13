@@ -1,0 +1,32 @@
+---
+description: Conventions for building the SSH-notebook app with Go + the Charm stack (Wish, Bubble Tea, Lip Gloss, Glamour)
+globs: **/*.go
+alwaysApply: false
+---
+
+# SSH Notebook — Go + Charm conventions
+
+This app serves a Markdown notebook over SSH. SSH is an app-delivery protocol, not a shell — never spawn a shell for the user.
+
+## SSH server (Wish)
+- Use `wish.WithMiddleware(...)`; order matters (outermost runs last). Include `logging` and `recover` middleware.
+- Persist the Ed25519 host key to disk/secret; never regenerate on each boot (breaks client pinning).
+- Auth: password (bcrypt-hashed, from secret) **or** a whitelist of SSH public-key fingerprints. Store per-session identity + permissions in the SSH context.
+- Public routes are read-only and sandboxed to the `public/` subtree — never allow edit actions on a public/anonymous session.
+
+## TUI (Bubble Tea)
+- One `tea.Model` per SSH session via the `bubbletea` middleware. Keep the standard `Init/Update/View` shape.
+- Model is a pure state machine: no blocking I/O in `Update`; do file/git work in `tea.Cmd`s returning messages.
+- Handle `tea.WindowSizeMsg` for responsive layout; support small terminals.
+- Render Markdown with Glamour; scroll with `bubbles/viewport`. Edit with `bubbles/textarea`.
+- Style only with Lip Gloss; no hardcoded ANSI escapes.
+
+## Content & git sync
+- Notebook content is a git working clone; access files through an `io/fs`-style abstraction, not raw paths scattered in the TUI.
+- Edits commit immediately, then push. Scheduled pulls use `--rebase --autostash` and skip when the tree is dirty.
+- Never `git push --force`.
+
+## General
+- Use `log/slog` for structured logging; recover from panics per-session so one session can't crash the server.
+- Keep packages under `internal/`: `server`, `auth`, `tui`, `content`, `gitsync`.
+- Secrets (password hash, deploy key/PAT) come from env/secret manager — never commit them.

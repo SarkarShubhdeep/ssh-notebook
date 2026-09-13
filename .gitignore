@@ -1,0 +1,23 @@
+# Go
+/bin/
+*.exe
+*.test
+*.out
+/vendor/
+
+# Host keys & secrets — never commit
+*.pem
+*.key
+id_ed25519*
+host_key*
+config.yaml
+.env
+.env.*
+
+# Local notebook content (kept in a separate repo)
+/content/
+/notebook/
+
+# OS / editor
+.DS_Store
+*.swp
