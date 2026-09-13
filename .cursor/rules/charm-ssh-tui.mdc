@@ -21,12 +21,13 @@ This app serves a Markdown notebook over SSH. SSH is an app-delivery protocol, n
 - Render Markdown with Glamour; scroll with `bubbles/viewport`. Edit with `bubbles/textarea`.
 - Style only with Lip Gloss; no hardcoded ANSI escapes.
 
-## Content & git sync
-- Notebook content is a git working clone; access files through an `io/fs`-style abstraction, not raw paths scattered in the TUI.
-- Edits commit immediately, then push. Scheduled pulls use `--rebase --autostash` and skip when the tree is dirty.
-- Never `git push --force`.
+## Content & backup
+- The notebook is plain files on a Fly persistent volume — the single writer. Access files through an `io/fs`-style abstraction, not raw paths scattered in the TUI.
+- Save = write the file to disk. Do NOT put git/network work on the save path.
+- Backup is a separate background worker doing a **one-way** push (server → GitHub/object storage), debounced after edits. Never pull onto the volume; never `git push --force`.
+- Sanitize paths so a session can never read/write outside the notebook root.
 
 ## General
 - Use `log/slog` for structured logging; recover from panics per-session so one session can't crash the server.
-- Keep packages under `internal/`: `server`, `auth`, `tui`, `content`, `gitsync`.
+- Keep packages under `internal/`: `server`, `auth`, `tui`, `content`, `backup`.
 - Secrets (password hash, deploy key/PAT) come from env/secret manager — never commit them.

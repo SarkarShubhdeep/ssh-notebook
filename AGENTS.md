@@ -9,7 +9,8 @@ Guidance for AI agents working in this repo.
 ## Stack
 
 - Go + [Wish](https://github.com/charmbracelet/wish) (SSH) + [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [Glamour](https://github.com/charmbracelet/glamour) (Markdown).
-- Content is a git-backed repo of `.md` files.
+- Content = plain `.md` files on a **Fly.io persistent volume** (the single writer). Git/object-storage is one-way **backup** only, off the save path.
+- Hosting: **Fly.io**.
 
 ## Conventions
 
@@ -27,4 +28,4 @@ go run ./cmd/ssh       # once the server is scaffolded
 
 ## Open decisions
 
-Several design tensions are unresolved (edit-vs-pull policy, content repo visibility, push credentials, public surface UX, domain). See §7 of the master plan and confirm with the user before implementing those areas.
+Storage model is settled (filesystem-primary, git as one-way backup). Still open: backup target & cadence, backup credential type, public surface UX, domain. See §7 of the master plan and confirm before implementing those areas.

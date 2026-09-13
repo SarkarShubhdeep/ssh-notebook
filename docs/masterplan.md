@@ -8,7 +8,9 @@ Inspired by [terminal.shop](https://www.terminal.shop): SSH is used as an *appli
 
 ## 1. Vision & Goals
 
-**What it is:** An SSH server that, instead of giving you a shell, drops you into a Terminal UI (TUI) that browses and renders a tree of Markdown files. You can read, search, and edit notes from anywhere.
+**What it is:** A **universal clipboard / notebook**. An SSH server that, instead of giving you a shell, drops you into a Terminal UI (TUI) to browse, read, and **edit** a tree of Markdown files from any machine. Sit down at a friend's computer, `ssh notebook.<yourdomain>`, enter your password, edit a note, save — done. Public notes need no password.
+
+The mental model is a personal scratchpad you can reach from anywhere, not a git workflow. Files live on the server; you just edit and save.
 
 **Why SSH:**
 - Zero install for readers — every OS already ships an `ssh` client.
@@ -26,11 +28,12 @@ Inspired by [terminal.shop](https://www.terminal.shop): SSH is used as an *appli
 | Area | Decision |
 |------|----------|
 | Language / stack | **Go + Charm**: [Wish](https://github.com/charmbracelet/wish) (SSH), [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI), [Lip Gloss](https://github.com/charmbracelet/lipgloss) (styling), [Glamour](https://github.com/charmbracelet/glamour) (Markdown rendering) |
-| Content source | **Git repo** — notebook is a versioned repo of `.md` files |
+| Content store | **Plain files on a Fly.io persistent volume** (primary). Edits write straight to disk. |
+| Backup / history | **Async, off the save path**: Fly daily volume snapshots + periodic git push (or R2/S3 sync). GitHub is a *backup drive*, not the live store. |
 | Auth | **Password for private access + whitelist of my SSH public keys**; a separate **public** entry (subdomain/command) with no auth |
-| MVP scope | Viewer **+ in-terminal editing that writes back** |
-| Repo | Public GitHub repo `ssh-notebook` |
-| Hosting | **Open decision — see §6 comparison** |
+| MVP scope | Viewer **+ in-terminal editing that writes back to disk** |
+| Repo | Public GitHub repo `ssh-notebook` (app code); notebook content backup goes to a **separate private repo** |
+| Hosting | **Fly.io** (see §6) |
 
 ---
 
@@ -48,21 +51,23 @@ flowchart TB
     ROUTE["Command/route parser\n(deep links, edit mode)"]
     TUI["Bubble Tea TUI\ntree + viewer + editor"]
     REND["Glamour renderer"]
-    STORE["Content store\ngit working clone"]
-    SYNC["Git sync\npull + commit/push"]
+    STORE["Content store\nfiles on Fly volume"]
+    BK["Backup worker\n(async, off save path)"]
 
     W --> AUTH --> ROUTE --> TUI
     TUI --> REND
-    TUI --> STORE
-    STORE <--> SYNC
+    TUI -->|read / write| STORE
+    STORE --> BK
   end
 
-  subgraph ext["External"]
-    GH["Notebook content repo\n(GitHub)"]
+  subgraph ext["External (backup only)"]
+    GH["Private content repo\n(GitHub)"]
+    OBJ["Object storage\n(R2 / S3, optional)"]
   end
 
   U -->|encrypted PTY| W
-  SYNC <-->|pull / push over deploy key| GH
+  BK -->|periodic push, one-way| GH
+  BK -.->|optional sync| OBJ
 ```
 
 ### Session lifecycle
@@ -70,8 +75,9 @@ flowchart TB
 2. Auth middleware decides: public route → allow anonymous read-only; private route → require password **or** a whitelisted public key fingerprint.
 3. Wish allocates a PTY and starts a per-session Bubble Tea program.
 4. The route parser inspects the requested command (`ssh notebook.me notes/x.md`, `-t edit ...`) and sets the initial view.
-5. TUI reads from the content store (a local git clone); Glamour renders Markdown to styled ANSI.
-6. Edits (authenticated only) write to the working tree, then commit + push.
+5. TUI reads files directly from the Fly volume; Glamour renders Markdown to styled ANSI.
+6. Edits (authenticated only) write straight to disk — the save is complete at that point.
+7. A background worker later backs up the volume to GitHub/object storage; this never blocks a save and, since nothing else writes the volume, never conflicts with edits.
 
 ---
 
@@ -87,9 +93,9 @@ flowchart TB
 | Viewer | Render Markdown, scroll, code highlighting | `glamour`, `bubbles/viewport` |
 | Editor | Edit buffer, save-back (auth only) | `bubbles/textarea` |
 | Search | Filename + full-text search | `bleve` or simple walk + grep |
-| Content store | Abstraction over the notebook files | stdlib `io/fs` |
-| Git sync | Pull updates, commit/push edits, conflict policy | `go-git` or shell `git` |
-| Config | Domains, key whitelist, password hash, repo URL, public paths | env + small config file |
+| Content store | Read/write notebook files on the Fly volume | stdlib `os` / `io/fs` |
+| Backup worker | Periodic one-way push to GitHub / object storage; runs off the save path | `go-git` or shell `git`, or `rsync`/S3 SDK |
+| Config | Domains, key whitelist, password hash, backup target, public paths | env + small config file |
 | Ops | Structured logging, panic recovery, metrics | `wish/logging`, `slog` |
 
 ---
@@ -100,7 +106,7 @@ Ship in thin vertical slices; each is independently demoable.
 
 ### v0.1 — "Hello, notebook" (read-only, local dir)
 - Wish server with password auth + host key persistence.
-- Bubble Tea shell: static file tree of a local directory.
+- Bubble Tea shell: file tree of a local directory (the future volume mount).
 - Glamour renders a selected `.md`; viewport scrolling.
 - Deep link: `ssh host path/to/file.md` opens that file.
 - **Exit criteria:** connect, browse, read a note over SSH locally.
@@ -111,16 +117,16 @@ Ship in thin vertical slices; each is independently demoable.
 - Public bypass: `public.` subdomain **or** a `public` command → read-only, no auth, restricted to a `public/` subtree.
 - **Exit criteria:** private needs password/key; public path is open and sandboxed.
 
-### v0.3 — Git-backed content + sync
-- Notebook content = a git repo cloned on the server.
-- Scheduled `git pull` with a safe policy (see §7 conflict handling).
-- **Exit criteria:** push to content repo → changes appear in the TUI after sync.
-
-### v0.4 — Editing that writes back
+### v0.3 — Editing that writes to disk
 - Editor view (auth only) with `bubbles/textarea`.
-- Save → write file → `git add/commit/push` via deploy key/token.
-- Guard rails: no editing on public routes; conflict-safe commits.
-- **Exit criteria:** edit a note in-terminal, changes are committed & pushed.
+- Save → write file directly to the notebook directory. That's the whole save.
+- Guard rails: no editing on public/anonymous routes; safe path handling (no escaping the notebook root).
+- **Exit criteria:** edit a note in-terminal, save, reconnect → change persisted.
+
+### v0.4 — Persistence + backup
+- Mount a Fly persistent volume as the notebook directory.
+- Background backup worker: periodic one-way push to a private GitHub repo (and/or R2/S3). Never blocks a save.
+- **Exit criteria:** data survives a machine restart/redeploy; backup lands in GitHub.
 
 ### v0.5 — Search & polish
 - Filename fuzzy find + full-text search.
@@ -139,7 +145,10 @@ Ship in thin vertical slices; each is independently demoable.
 
 ---
 
-## 6. Hosting Comparison (open decision)
+## 6. Hosting — Fly.io (chosen)
+
+Fly.io was chosen for git-based deploys, persistent volumes, dedicated IPv4 for raw port 22, and low ops. Comparison retained for reference:
+
 
 | Option | Est. cost | SSH/TCP :22 | Persistent disk | Deploy UX | Ops burden | Best when |
 |--------|-----------|-------------|-----------------|-----------|------------|-----------|
@@ -159,14 +168,11 @@ Ship in thin vertical slices; each is independently demoable.
 
 These need your input before/at the relevant milestone:
 
-1. **⚠️ Edit + scheduled-pull conflict (v0.3/v0.4).** In-terminal edits and a background `git pull` can clobber each other. Proposed policy:
-   - Edits always `commit` immediately, then `push`.
-   - Scheduled sync uses `git pull --rebase --autostash` and only runs when the tree is clean, or is disabled while an edit session is active.
-   - **Decision:** OK with "edits are the source of truth, pull rebases on top"? Or should the server be push-only (you edit locally, it never edits)?
+1. **✅ Resolved — storage model.** Server volume is the single writer; git/object-storage is one-way backup only. No pull-vs-edit conflict. (Decided: filesystem-primary, GitHub as backup.)
 
-2. **Content repo vs app repo.** Keep the notebook Markdown in a **separate private repo** from this app's code (recommended — keeps notes out of the public `ssh-notebook` repo). **Decision:** confirm separate content repo + its visibility.
+2. **Backup target & cadence (v0.4).** Private GitHub repo, object storage (R2/S3), or both? How often — every N minutes, or debounced a few seconds after each save? **Decision:** pick target + cadence. (Recommended: private GitHub repo, debounced ~30s after last edit.)
 
-3. **Push credentials.** The server needs write access to push edits: a **deploy key** (SSH) or a **fine-grained PAT**. **Decision:** which, and where stored (host secret manager / env)?
+3. **Backup credentials.** One-way push needs write access: a **deploy key** (SSH) or a **fine-grained PAT**, stored as a Fly secret. **Decision:** which credential type?
 
 4. **Password storage.** Single shared password (hashed, e.g. bcrypt) vs per-user. MVP = single hashed password in a secret. **Decision:** confirm single-password MVP.
 
@@ -188,8 +194,8 @@ ssh-notebook/
 │   ├── server/              # wish setup, middleware, host key
 │   ├── auth/                # password + key whitelist + public bypass
 │   ├── tui/                 # bubbletea model: tree, viewer, editor
-│   ├── content/             # fs abstraction over notebook
-│   └── gitsync/             # pull/commit/push
+│   ├── content/             # fs read/write over notebook dir
+│   └── backup/              # one-way push to GitHub / object storage
 ├── docs/
 │   └── masterplan.md        # this file
 ├── config.example.yaml
@@ -204,8 +210,8 @@ ssh-notebook/
 
 - [ ] v0.1 Read-only viewer over SSH (local dir)
 - [ ] v0.2 Auth model (password + key whitelist + public bypass)
-- [ ] v0.3 Git-backed content + scheduled sync
-- [ ] v0.4 In-terminal editing with commit/push
+- [ ] v0.3 In-terminal editing that writes to disk
+- [ ] v0.4 Fly persistent volume + async backup
 - [ ] v0.5 Search + UI polish
 - [ ] v0.6 Deploy + DNS + published host key
 
